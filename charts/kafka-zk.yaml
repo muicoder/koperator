@@ -1,0 +1,234 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/name: zk-prod
+  name: zk-prod-headless
+spec:
+  clusterIP: None
+  ports:
+    - name: client
+      port: 2181
+      targetPort: 2181
+    - name: follower
+      port: 2888
+      targetPort: 2888
+    - name: leader-election
+      port: 3888
+      targetPort: 3888
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: zk-prod
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/name: zk-prod
+  name: zk-prod-client
+spec:
+  ports:
+    - name: client
+      port: 2181
+      targetPort: 2181
+  selector:
+    app.kubernetes.io/name: zk-prod
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app.kubernetes.io/name: zk-prod
+  name: zk-prod
+spec:
+  minReadySeconds: &mrs 30
+  podManagementPolicy: Parallel # OrderedReady[ruok/imok] Parallel[srvr/Mode] for readinessProbe
+  replicas: 3 # and REPLICAS
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zk-prod
+  serviceName: &dm zk-prod-headless
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: zk-prod
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: zk-prod
+                topologyKey: kubernetes.io/hostname
+              weight: 100
+      containers:
+        - command:
+            - sh
+            - -ec
+            - |
+              cp -a /data/setup.init conf/zoo.cfg
+              if java -version 2>&1 | grep -q "Dragonwell Extended"; then export JVMFLAGS="$JVMFLAGS -Dcom.alibaba.wisp.transparent=false"; fi
+              if [ -s /data/jaas.conf ]; then export JVMFLAGS="$JVMFLAGS -Djava.security.auth.login.config=/data/jaas.conf"; fi
+              export JMXDISABLE=true; sed -i '/_JVMFLAGS=/d' bin/zkEnv.sh
+              get_limit_mb() {
+              limit_bytes=$(cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null)
+              if ! [ "$limit_bytes" -gt 524288000 ] 2>/dev/null; then limit_bytes=$(free -b | awk '/^Mem:/{print $2}'); fi
+              echo $((limit_bytes / 1024 / 1024))
+              }
+              if [ "$(get_limit_mb)" -lt 8192 ]; then
+              export JVMFLAGS="$JVMFLAGS -XX:InitialRAMPercentage=50.0 -XX:MaxRAMPercentage=50.0"
+              else
+              export JVMFLAGS="$JVMFLAGS -Xms4g -Xmx4g"
+              fi
+              exec zkServer.sh start-foreground
+          env:
+            - name: JVMFLAGS
+              value: >-
+                -Dfile.encoding=UTF-8
+                -Djava.awt.headless=true
+                -XX:+CrashOnOutOfMemoryError
+                -XX:MetaspaceSize=128m
+                -XX:MaxMetaspaceSize=256m
+                -XX:MaxDirectMemorySize=512m
+                -XX:MaxMetaspaceFreeRatio=80
+                -XX:MinMetaspaceFreeRatio=50
+            - name: SERVER_JVMFLAGS
+              value: >-
+                -server
+                -XX:+ExplicitGCInvokesConcurrent
+                -XX:+UseG1GC
+                -XX:MaxGCPauseMillis=50
+                -XX:+UseStringDeduplication
+          image: muicoder/zookeeper:3.8.5
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - sh
+                  - -c
+                  - |
+                    zkServer.sh stop
+          livenessProbe:
+            tcpSocket:
+              port: client
+            timeoutSeconds: 5
+          name: zookeeper
+          ports:
+            - containerPort: 2181
+              name: client
+            - containerPort: 2888
+              name: follower
+            - containerPort: 3888
+              name: leader-election
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - echo srvr | nc localhost 2181 | grep Mode
+            timeoutSeconds: 5
+          resources:
+            limits:
+              cpu: "2"
+              memory: 4Gi
+            requests:
+              cpu: "2"
+              memory: 4Gi
+          startupProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - echo ruok | nc localhost 2181 | grep imok
+            failureThreshold: 12
+            initialDelaySeconds: *mrs
+            timeoutSeconds: 3
+          volumeMounts:
+            - mountPath: /data
+              name: data
+      enableServiceLinks: false
+      initContainers:
+        - command:
+            - sh
+            - -ec
+            - |
+              until getent ahosts "$POD_NAME.$DOMAIN.$POD_NAMESPACE.svc" | grep "$(hostname -i)"; do sleep 3; done >/dev/null
+              readonly CONF="/data/setup.init"
+              cat <<EOF >"$CONF"
+              4lw.commands.whitelist=srvr,stat,mntr,ruok
+              autopurge.purgeInterval=1
+              autopurge.snapRetainCount=3
+              dataDir=/data
+              initLimit=10
+              quorumListenOnAllIPs=true
+              syncLimit=5
+              tickTime=2000
+              zookeeper.serverCnxnFactory=org.apache.zookeeper.server.NettyServerCnxnFactory
+              EOF
+              for i in $(seq "$REPLICAS"); do echo "server.$i=${POD_NAME%-*}-$((i - 1)).$DOMAIN.$POD_NAMESPACE.svc:2888:3888:participant;2181"; done >>"$CONF"
+              echo $((${POD_NAME##*-} + 1)) >"/data/myid"
+              if [ "$JAASDISABLE" != "true" ]; then
+              cat <<EOF >/data/jaas.conf
+              Server {
+              org.apache.zookeeper.server.auth.DigestLoginModule required
+              username="$DOMAIN"
+              password="$DOMAIN.$POD_NAMESPACE"
+              user_kafka="$KUBERNETES_SERVICE_HOST";
+              };
+              EOF
+              cat <<EOF >>"$CONF"
+              authProvider.1=org.apache.zookeeper.server.auth.SASLAuthenticationProvider
+              requireClientAuthScheme=sasl
+              sessionRequireClientSASLAuth=true
+              EOF
+              else
+              rm -f /data/jaas.conf
+              fi
+          env:
+            - name: DOMAIN
+              value: *dm
+            - name: JAASDISABLE
+              value: "false"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+            - name: REPLICAS
+              value: "3"
+          image: muicoder/zookeeper:3.8.5
+          imagePullPolicy: Always
+          name: setup
+          volumeMounts:
+            - mountPath: /data
+              name: data
+      nodeSelector:
+        zookeeper: ""
+      terminationGracePeriodSeconds: 120
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        # storageClassName: ssd
+        resources:
+          requests:
+            storage: 20Gi
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: zk-prod
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zk-prod

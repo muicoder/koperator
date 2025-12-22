@@ -1,0 +1,239 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/name: kafka-prod
+  name: kafka-prod-headless
+spec:
+  clusterIP: None
+  ports:
+    - name: client
+      port: 9092
+      targetPort: 9092
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: kafka-prod
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/name: kafka-prod
+  name: kafka-prod-client
+spec:
+  ports:
+    - name: client
+      port: 9092
+      targetPort: 9092
+  selector:
+    app.kubernetes.io/name: kafka-prod
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app.kubernetes.io/name: kafka-prod
+  name: kafka-prod
+spec:
+  minReadySeconds: &mrs 30
+  podManagementPolicy: OrderedReady
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kafka-prod
+  serviceName: &dm kafka-prod-headless
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kafka-prod
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: kafka-prod
+                topologyKey: kubernetes.io/hostname
+              weight: 100
+      containers:
+        - command:
+            - sh
+            - -ec
+            - |
+              cp -a /data/setup.init config/broker.properties
+              if java -version 2>&1 | grep -q "Dragonwell Extended"; then export KAFKA_OPTS="$KAFKA_OPTS -Dcom.alibaba.wisp.transparent=true"; fi
+              if [ -s /data/jaas.conf ]; then export KAFKA_OPTS="$KAFKA_OPTS -Djava.security.auth.login.config=/data/jaas.conf"; fi
+              export KAFKA_JMX_OPTS=-Dcom.sun.management.jmxremote=false
+              get_limit_mb() {
+              limit_bytes=$(cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null)
+              if ! [ "$limit_bytes" -gt 524288000 ] 2>/dev/null; then limit_bytes=$(free -b | awk '/^Mem:/{print $2}'); fi
+              echo $((limit_bytes / 1024 / 1024))
+              }
+              if [ "$(get_limit_mb)" -lt 15360 ]; then
+              export KAFKA_OPTS="$KAFKA_OPTS -XX:InitialRAMPercentage=40.0 -XX:MaxRAMPercentage=40.0"
+              else
+              export KAFKA_OPTS="$KAFKA_OPTS -Xms6g -Xmx6g"
+              fi
+              exec kafka-server-start.sh config/broker.properties
+          env:
+            - name: KAFKA_HEAP_OPTS
+              value: >-
+                -Dfile.encoding=UTF-8
+                -Djava.awt.headless=true
+                -XX:+CrashOnOutOfMemoryError
+                -XX:MetaspaceSize=256m
+                -XX:MaxMetaspaceSize=512m
+                -XX:MaxDirectMemorySize=1g
+                -XX:MaxMetaspaceFreeRatio=80
+                -XX:MinMetaspaceFreeRatio=50
+            - name: KAFKA_JVM_PERFORMANCE_OPTS
+              value: >-
+                -server
+                -XX:+ExplicitGCInvokesConcurrent
+                -XX:+UseG1GC
+                -XX:MaxGCPauseMillis=100
+                -XX:+UseStringDeduplication
+          image: muicoder/kafka:2.12-2.8.2
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - sh
+                  - -c
+                  - |
+                    kafka-server-stop.sh
+          livenessProbe:
+            tcpSocket:
+              port: client
+            timeoutSeconds: 5
+          name: kafka
+          ports:
+            - containerPort: 9092
+              name: client
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - exec kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null
+            timeoutSeconds: 5
+          resources:
+            limits:
+              cpu: "4"
+              memory: 8Gi
+            requests:
+              cpu: "4"
+              memory: 8Gi
+          startupProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - exec kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null
+            failureThreshold: 18
+            initialDelaySeconds: *mrs
+            timeoutSeconds: 3
+          volumeMounts:
+            - mountPath: /data
+              name: data
+      enableServiceLinks: false
+      initContainers:
+        - command:
+            - sh
+            - -ec
+            - |
+              until getent ahosts "$POD_NAME.$DOMAIN.$POD_NAMESPACE.svc" | grep "$(hostname -i)"; do sleep 3; done >/dev/null
+              readonly CONF="/data/setup.init"
+              cat <<EOF >"$CONF"
+              advertised.listeners=PLAINTEXT://$POD_NAME.$DOMAIN.$POD_NAMESPACE.svc:9092
+              auto.create.topics.enable=true
+              broker.id=${POD_NAME##*-}
+              default.replication.factor=3
+              delete.topic.enable=false
+              group.initial.rebalance.delay.ms=5000
+              inter.broker.listener.name=PLAINTEXT
+              listener.security.protocol.map=PLAINTEXT:PLAINTEXT
+              listeners=PLAINTEXT://:9092
+              log.cleaner.threads=2
+              log.dirs=/data
+              log.retention.hours=120
+              message.max.bytes=10485760
+              min.insync.replicas=2
+              num.io.threads=8
+              num.network.threads=5
+              num.partitions=15
+              num.replica.fetchers=3
+              offsets.topic.num.partitions=30
+              offsets.topic.replication.factor=3
+              replica.fetch.max.bytes=15728640
+              socket.receive.buffer.bytes=1048576
+              socket.send.buffer.bytes=1048576
+              transaction.state.log.min.isr=2
+              transaction.state.log.num.partitions=30
+              transaction.state.log.replication.factor=3
+              unclean.leader.election.enable=false
+              zookeeper.connect=$ZOOKEEPER_CONNECT/$DOMAIN.$POD_NAMESPACE
+              EOF
+              until echo stat | nc -w 3 "${ZOOKEEPER_CONNECT%:*}" "${ZOOKEEPER_CONNECT#*:}" | grep -q "Mode: leader"; do sleep 3; done
+              if [ "$JAASDISABLE" != "true" ]; then
+              cat <<EOF >/data/jaas.conf
+              Client {
+              org.apache.kafka.common.security.plain.PlainLoginModule required
+              username="kafka"
+              password="$KUBERNETES_SERVICE_HOST";
+              };
+              EOF
+              cat <<EOF >>"$CONF"
+              zookeeper.set.acl=true
+              EOF
+              else
+              rm -f /data/jaas.conf
+              fi
+          env:
+            - name: DOMAIN
+              value: *dm
+            - name: JAASDISABLE
+              value: "false"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+            - name: ZOOKEEPER_CONNECT
+              value: zk-prod-client:2181
+          image: muicoder/kafka:2.12-2.8.2
+          imagePullPolicy: Always
+          name: setup
+          volumeMounts:
+            - mountPath: /data
+              name: data
+      nodeSelector:
+        kafka: ""
+      terminationGracePeriodSeconds: 180
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        # storageClassName: hdd
+        resources:
+          requests:
+            storage: 100Gi
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: kafka-prod
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kafka-prod
