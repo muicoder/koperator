@@ -1,8 +1,6 @@
 apiVersion: kafka.banzaicloud.io/v1beta1
 kind: KafkaCluster
 metadata:
-  labels:
-    controller-tools.k8s.io: "1.0"
   name: kafka
 spec:
   kRaft: false
@@ -18,6 +16,18 @@ spec:
     cruise.control.metrics.topic.replication.factor=2
   brokerConfigGroups:
     default:
+      envs:
+        - name: KAFKA_HEAP_OPTS
+          value: "-Xmx2G -Xms2G"
+        - name: KAFKA_JVM_PERFORMANCE_OPTS
+          value: "-server -XX:+UseG1GC -XX:MaxGCPauseMillis=20 -XX:InitiatingHeapOccupancyPercent=35 -XX:+ExplicitGCInvokesConcurrent -Djava.awt.headless=true -Dsun.net.inetaddr.ttl=60"
+      resourceRequirements:
+        limits:
+          memory: 4Gi
+          cpu: "2"
+        requests:
+          memory: "4Gi"
+          cpu: "2"
       storageConfigs:
         - mountPath: "/kafka-logs"
           pvcSpec:
@@ -25,7 +35,7 @@ spec:
               - ReadWriteOnce
             resources:
               requests:
-                storage: 10Gi
+                storage: 100Gi
   brokers:
     - id: 0
       brokerConfigGroup: "default"
@@ -36,22 +46,27 @@ spec:
   rollingUpgradeConfig:
     failureThreshold: 1
   listenersConfig:
-    externalListeners:
-      - type: "plaintext"
-        name: "external"
-        externalStartingPort: 19090
-        containerPort: 9094
     internalListeners:
       - type: "plaintext"
         name: "plaintext"
-        containerPort: 29092
+        containerPort: 9092
         usedForInnerBrokerCommunication: true
       - type: "plaintext"
         name: "controller"
-        containerPort: 29093
+        containerPort: 9093
         usedForInnerBrokerCommunication: false
         usedForControllerCommunication: true
+  monitoringConfig:
+    jmxImage: ghcr.io/adobe/koperator/jmx-javaagent:latest # https://github.com/prometheus/jmx_exporter
   cruiseControlConfig:
+    resourceRequirements:
+      limits:
+        memory: 2Gi
+        cpu: "2"
+      requests:
+        memory: 2Gi
+        cpu: "2"
+    image: docker.io/adobe/cruise-control:latest # https://github.com/adobe/cruise-control/releases
     config: |
       # Copyright 2017 LinkedIn Corp. Licensed under the BSD 2-Clause License (the "License"). See License in the project root for license information.
       #
