@@ -1,0 +1,216 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/name: zk-prod
+  name: zk-prod-headless
+spec:
+  clusterIP: None
+  ports:
+    - name: client
+      port: 2181
+      targetPort: 2181
+    - name: follower
+      port: 2888
+      targetPort: 2888
+    - name: leader-election
+      port: 3888
+      targetPort: 3888
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: zk-prod
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/name: zk-prod
+  name: zk-prod-client
+spec:
+  ports:
+    - name: client
+      port: 2181
+      targetPort: 2181
+  selector:
+    app.kubernetes.io/name: zk-prod
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app.kubernetes.io/name: zk-prod
+  name: zk-prod
+spec:
+  minReadySeconds: &mrs 10
+  podManagementPolicy: OrderedReady # OrderedReady[ruok/imok] Parallel[stat/Mode] for readinessProbe
+  replicas: 3 # and REPLICAS
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zk-prod
+  serviceName: &dm zk-prod-headless
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: zk-prod
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: zk-prod
+                topologyKey: kubernetes.io/hostname
+              weight: 100
+      containers:
+        - command:
+            - sh
+            - -ec
+            - |
+              until getent ahosts "$POD_NAME.$DOMAIN.$POD_NAMESPACE.svc" | grep "$(hostname -i)"; do sleep 3; done >/dev/null
+              cat <<EOF >"$DATA/$DOMAIN.$POD_NAMESPACE.jaas"
+              Server {
+              org.apache.zookeeper.server.auth.DigestLoginModule required
+              username="$DOMAIN"
+              password="$DOMAIN.$POD_NAMESPACE"
+              user_kafka="$KUBERNETES_SERVICE_HOST";
+              };
+              EOF
+              readonly CONF="conf/zoo.cfg"
+              cat <<EOF >"$CONF"
+              4lw.commands.whitelist=srvr,stat,mntr,ruok
+              authProvider.1=org.apache.zookeeper.server.auth.SASLAuthenticationProvider
+              requireClientAuthScheme=sasl
+              sessionRequireClientSASLAuth=true
+              autopurge.purgeInterval=2
+              autopurge.snapRetainCount=3
+              dataDir=$DATA
+              dataLogDir=$DATA/log
+              fsync.warningthresholdms=500
+              globalOutstandingLimit=1000
+              maxClientCnxns=0
+              quorumListenOnAllIPs=true
+              tickTime=2000
+              initLimit=10
+              syncLimit=5
+              EOF
+              echo $((${POD_NAME##*-} + 1)) >"$DATA/myid"
+              if grep -q _JVMFLAGS= bin/zkEnv.sh; then sed -i '/_JVMFLAGS=/d' bin/zkEnv.sh; fi
+              for i in $(seq "$REPLICAS"); do echo "server.$i=${POD_NAME%-*}-$((i - 1)).$DOMAIN.$POD_NAMESPACE.svc:2888:3888:participant;2181"; done >>"$CONF"
+              if java -version 2>&1 | grep -q "Dragonwell Extended"; then export JVMFLAGS="$JVMFLAGS -Dcom.alibaba.wisp.transparent=false -Djava.security.auth.login.config=$DATA/$DOMAIN.$POD_NAMESPACE.jaas"; fi
+              export JMXDISABLE=true
+              exec zkServer.sh --config "${CONF%/*}" start-foreground
+          env:
+            - name: REPLICAS
+              value: "3"
+            - name: DATA
+              value: /data
+            - name: JVMFLAGS
+              value: >-
+                -Dfile.encoding=UTF-8
+                -Djava.awt.headless=true
+                -XX:+CrashOnOutOfMemoryError
+                -XX:+UseContainerSupport
+                -XX:InitialRAMPercentage=30.0
+                -XX:MaxRAMPercentage=70.0
+                -XX:MinRAMPercentage=30.0
+                -XX:MetaspaceSize=128m
+                -XX:MaxMetaspaceSize=256m
+                -XX:MaxMetaspaceFreeRatio=80
+                -XX:MinMetaspaceFreeRatio=50
+            - name: SERVER_JVMFLAGS
+              value: >-
+                -server
+                -XX:+ExplicitGCInvokesConcurrent
+                -XX:+UseG1GC
+                -XX:+UseStringDeduplication
+                -XX:G1MixedGCCountTarget=16
+                -XX:InitiatingHeapOccupancyPercent=35
+                -XX:MaxGCPauseMillis=30
+                -XX:MaxInlineLevel=15
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+            - name: DOMAIN
+              value: *dm
+          image: muicoder/zookeeper:3.8.5
+          imagePullPolicy: Always
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - sh
+                  - -c
+                  - |
+                    sleep 3
+                    zkServer.sh stop || exit
+          livenessProbe:
+            tcpSocket:
+              port: client
+            timeoutSeconds: 5
+          name: zookeeper
+          ports:
+            - containerPort: 2181
+              name: client
+            - containerPort: 2888
+              name: follower
+            - containerPort: 3888
+              name: leader-election
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - echo ruok | nc -w 3 localhost 2181 | grep imok
+            timeoutSeconds: 3
+          resources:
+            limits:
+              cpu: "4"
+              memory: 8Gi
+            requests:
+              cpu: "2"
+              memory: 4Gi
+          startupProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - echo ruok | nc -w 3 localhost 2181 | grep imok
+            failureThreshold: 10
+            initialDelaySeconds: *mrs
+            timeoutSeconds: 3
+          volumeMounts:
+            - mountPath: /data
+              name: data
+      enableServiceLinks: false
+      nodeSelector:
+        zookeeper: ""
+      terminationGracePeriodSeconds: 120
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        # storageClassName: ssd
+        resources:
+          requests:
+            storage: 20Gi
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: zk-prod
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zk-prod
