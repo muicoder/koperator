@@ -20,6 +20,7 @@ spec:
   publishNotReadyAddresses: true
   selector:
     app.kubernetes.io/name: zk-prod
+  type: ClusterIP
 ---
 apiVersion: v1
 kind: Service
@@ -70,11 +71,11 @@ spec:
             - -ec
             - |
               echo $((${POD_NAME##*-} + 1)) >/data/myid
-              until getent ahosts "$POD_NAME.$ZK_DOMAIN.$POD_NAMESPACE.svc" | grep "$(hostname -i)"; do sleep 1; done >/dev/null
+              until getent ahosts "$POD_NAME.$DOMAIN.$POD_NAMESPACE.svc" | grep "$(hostname -i)"; do sleep 3; done >/dev/null
               cat <<EOF >conf/zoo.cfg
               tickTime=2000
               initLimit=10
-              syncLimit=2
+              syncLimit=5
               dataDir=/data
               dataLogDir=/data/log
               skipACL=yes
@@ -119,7 +120,7 @@ spec:
                 fieldRef:
                   apiVersion: v1
                   fieldPath: metadata.namespace
-            - name: ZK_DOMAIN
+            - name: DOMAIN
               value: *dm
           image: muicoder/zookeeper:3.8.5
           lifecycle:
@@ -128,7 +129,9 @@ spec:
                 command:
                   - sh
                   - -c
-                  - exec zkServer.sh stop
+                  - |
+                    sleep 3
+                    zkServer.sh stop || true
           livenessProbe:
             exec:
               command:
