@@ -131,7 +131,7 @@ spec:
                   - -c
                   - |
                     sleep 9
-                    zkServer.sh stop || true
+                    zkServer.sh stop || exit
           livenessProbe:
             exec:
               command:
