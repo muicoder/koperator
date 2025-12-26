@@ -88,7 +88,7 @@ spec:
               4lw.commands.whitelist=srvr,stat,mntr,conf,ruok,cons,isro
               globalOutstandingLimit=1000
               EOF
-              for i in $(seq "$REPLICAS"); do echo "server.$i=${POD_NAME%-*}-$((i - 1)).$ZK_DOMAIN.$POD_NAMESPACE.svc:2888:3888:participant;2181"; done >>conf/zoo.cfg
+              for i in $(seq "$REPLICAS"); do echo "server.$i=${POD_NAME%-*}-$((i - 1)).$DOMAIN.$POD_NAMESPACE.svc:2888:3888:participant;2181"; done >>conf/zoo.cfg
               exec zkServer.sh start-foreground
           env:
             - name: REPLICAS
@@ -130,7 +130,7 @@ spec:
                   - sh
                   - -c
                   - |
-                    sleep 3
+                    sleep 9
                     zkServer.sh stop || true
           livenessProbe:
             exec:
@@ -167,9 +167,9 @@ spec:
                 - sh
                 - -c
                 - echo ruok | nc -w 3 localhost 2181 | grep imok
-            failureThreshold: 30
+            failureThreshold: 10
             initialDelaySeconds: *mrs
-            periodSeconds: 5
+            timeoutSeconds: 3
           volumeMounts:
             - mountPath: /data
               name: data
