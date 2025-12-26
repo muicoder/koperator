@@ -14,6 +14,7 @@ spec:
   publishNotReadyAddresses: true
   selector:
     app.kubernetes.io/name: kafka-prod
+  type: ClusterIP
 ---
 apiVersion: v1
 kind: Service
@@ -65,12 +66,12 @@ spec:
             - |
               CONF_FILE="config/server.properties"
               cp "$CONF_FILE" "$ENV_LOG_DIRS"
-              echo "############################# $ZK_DOMAIN.$POD_NAMESPACE.svc #############################" >>"$CONF_FILE"
+              echo "############################# $DOMAIN.$POD_NAMESPACE.svc #############################" >>"$CONF_FILE"
               export ENV_BROKER_ID="${POD_NAME##*-}"
               export ENV_INTER_BROKER_LISTENER_NAME=PLAINTEXT
               export ENV_LISTENERS=PLAINTEXT://:9092
               export ENV_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT
-              export ENV_ADVERTISED_LISTENERS=PLAINTEXT://$POD_NAME.$ZK_DOMAIN.$POD_NAMESPACE.svc:9092
+              export ENV_ADVERTISED_LISTENERS=PLAINTEXT://$POD_NAME.$DOMAIN.$POD_NAMESPACE.svc:9092
               printenv | grep "^ENV_" | sort -u | while IFS= read -r line; do
                   key="${line%%=*}"
                   val="${line#*=}"
@@ -136,7 +137,7 @@ spec:
                 fieldRef:
                   apiVersion: v1
                   fieldPath: metadata.namespace
-            - name: ZK_DOMAIN
+            - name: DOMAIN
               value: *dm
           image: muicoder/kafka:2.12-2.8.2
           lifecycle:
@@ -145,7 +146,9 @@ spec:
                 command:
                   - sh
                   - -c
-                  - exec kafka-server-stop.sh
+                  - |
+                    sleep 9
+                    kafka-server-stop.sh || true
           livenessProbe:
             tcpSocket:
               port: client
@@ -173,7 +176,7 @@ spec:
                 - sh
                 - -c
                 - exec kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1
-            failureThreshold: 30
+            failureThreshold: 20
             initialDelaySeconds: *mrs
             timeoutSeconds: 5
           volumeMounts:
@@ -188,7 +191,7 @@ spec:
         name: data
       spec:
         accessModes: [ReadWriteOnce]
-        # storageClassName: ssd
+        # storageClassName: hdd
         resources:
           requests:
             storage: 100Gi
