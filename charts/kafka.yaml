@@ -73,6 +73,7 @@ spec:
               password="$KUBERNETES_SERVICE_HOST";
               };
               EOF
+              export KAFKA_OPTS="$KAFKA_OPTS -Djava.security.auth.login.config=$DATA/$DOMAIN.$POD_NAMESPACE.jaas"
               readonly CONF="config/kafka.properties"
               cat <<EOF >"$CONF"
               advertised.listeners=PLAINTEXT://$POD_NAME.$DOMAIN.$POD_NAMESPACE.svc:9092
@@ -105,7 +106,7 @@ spec:
               zookeeper.connect=$ZOOKEEPER_CONNECT/$DOMAIN.$POD_NAMESPACE
               zookeeper.set.acl=true
               EOF
-              if java -version 2>&1 | grep -q "Dragonwell Extended"; then export KAFKA_OPTS="$KAFKA_OPTS -Dcom.alibaba.wisp.transparent=true -Djava.security.auth.login.config=$DATA/$DOMAIN.$POD_NAMESPACE.jaas"; fi
+              if java -version 2>&1 | grep -q "Dragonwell Extended"; then export KAFKA_OPTS="$KAFKA_OPTS -Dcom.alibaba.wisp.transparent=true"; fi
               export KAFKA_JMX_OPTS=-Dcom.sun.management.jmxremote=false
               exec kafka-server-start.sh "${CONF}"
           env:
