@@ -79,6 +79,7 @@ spec:
               user_kafka="$KUBERNETES_SERVICE_HOST";
               };
               EOF
+              export JVMFLAGS="$JVMFLAGS -Djava.security.auth.login.config=$DATA/$DOMAIN.$POD_NAMESPACE.jaas"
               readonly CONF="conf/zoo.cfg"
               cat <<EOF >"$CONF"
               4lw.commands.whitelist=srvr,stat,mntr,ruok
@@ -100,7 +101,7 @@ spec:
               echo $((${POD_NAME##*-} + 1)) >"$DATA/myid"
               if grep -q _JVMFLAGS= bin/zkEnv.sh; then sed -i '/_JVMFLAGS=/d' bin/zkEnv.sh; fi
               for i in $(seq "$REPLICAS"); do echo "server.$i=${POD_NAME%-*}-$((i - 1)).$DOMAIN.$POD_NAMESPACE.svc:2888:3888:participant;2181"; done >>"$CONF"
-              if java -version 2>&1 | grep -q "Dragonwell Extended"; then export JVMFLAGS="$JVMFLAGS -Dcom.alibaba.wisp.transparent=false -Djava.security.auth.login.config=$DATA/$DOMAIN.$POD_NAMESPACE.jaas"; fi
+              if java -version 2>&1 | grep -q "Dragonwell Extended"; then export JVMFLAGS="$JVMFLAGS -Dcom.alibaba.wisp.transparent=false"; fi
               export JMXDISABLE=true
               exec zkServer.sh --config "${CONF%/*}" start-foreground
           env:
