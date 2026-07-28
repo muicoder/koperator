@@ -1,0 +1,29 @@
+FROM alpine:latest AS dist
+
+ARG zookeeper_version
+ARG distro_base_url=https://archive.apache.org/dist/zookeeper
+
+ENV distro=apache-zookeeper-$zookeeper_version-bin.tar.gz
+ENV distro_asc=$distro.asc
+
+WORKDIR /
+
+# Download, verify, extract and clean up Kafka in single layer
+RUN apk add --no-cache gnupg wget && \
+    wget -q $distro_base_url/zookeeper-$zookeeper_version/$distro && \
+    wget -q $distro_base_url/zookeeper-$zookeeper_version/$distro_asc && \
+    wget -q $distro_base_url/KEYS && \
+    gpg --import KEYS && \
+    gpg --verify $distro_asc $distro && \
+    tar -xzf $distro && \
+    mv apache-zookeeper-$zookeeper_version-bin dist && \
+    rm -rf dist/bin/*.cmd dist/lib/*.txt \
+           dist/docs dist/*.md dist/*.txt \
+           $distro $distro_asc KEYS
+
+FROM muicoder/java:11
+ENV DIST_HOME=/dist
+COPY --from=dist $DIST_HOME $DIST_HOME
+ENV PATH=$PATH:$DIST_HOME/bin
+WORKDIR $DIST_HOME
+CMD ["zkServer.sh", "start-foreground"]

@@ -6,7 +6,7 @@ ARG scala_version=2.13
 ARG KAFKA_VERSION=3.9.2 # renovate: datasource=github-tags depName=apache/kafka
 ARG java_version=21
 
-FROM alpine:latest@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS kafka_dist
+FROM alpine:latest AS kafka_dist
 
 ARG scala_version
 ARG KAFKA_VERSION
@@ -28,13 +28,15 @@ RUN apk add --no-cache gnupg wget && \
     gpg --verify $kafka_distro_asc $kafka_distro && \
     tar -xzf $kafka_distro && \
     rm -rf kafka_$scala_version-$KAFKA_VERSION/bin/windows \
+           kafka_$scala_version-$kafka_version/libs/zookeeper-* \
            kafka_$scala_version-$KAFKA_VERSION/site-docs \
            $kafka_distro $kafka_distro_asc KEYS && \
-    find kafka_$scala_version-$KAFKA_VERSION -name "*.bat" -delete
+    zookeeper_version=3.8.6 && wget -qO- https://archive.apache.org/dist/zookeeper/zookeeper-$zookeeper_version/apache-zookeeper-$zookeeper_version-bin.tar.gz | tar -xzCkafka_$scala_version-$kafka_version/libs --strip-components 2 apache-zookeeper-$zookeeper_version-bin/lib/zookeeper-jute-$zookeeper_version.jar apache-zookeeper-$zookeeper_version-bin/lib/zookeeper-$zookeeper_version.jar && \
+    echo IyBMaWNlbnNlZCB0byB0aGUgQXBhY2hlIFNvZnR3YXJlIEZvdW5kYXRpb24gKEFTRikgdW5kZXIgb25lIG9yIG1vcmUKIyBjb250cmlidXRvciBsaWNlbnNlIGFncmVlbWVudHMuICBTZWUgdGhlIE5PVElDRSBmaWxlIGRpc3RyaWJ1dGVkIHdpdGgKIyB0aGlzIHdvcmsgZm9yIGFkZGl0aW9uYWwgaW5mb3JtYXRpb24gcmVnYXJkaW5nIGNvcHlyaWdodCBvd25lcnNoaXAuCiMgVGhlIEFTRiBsaWNlbnNlcyB0aGlzIGZpbGUgdG8gWW91IHVuZGVyIHRoZSBBcGFjaGUgTGljZW5zZSwgVmVyc2lvbiAyLjAKIyAodGhlICJMaWNlbnNlIik7IHlvdSBtYXkgbm90IHVzZSB0aGlzIGZpbGUgZXhjZXB0IGluIGNvbXBsaWFuY2Ugd2l0aAojIHRoZSBMaWNlbnNlLiAgWW91IG1heSBvYnRhaW4gYSBjb3B5IG9mIHRoZSBMaWNlbnNlIGF0CiMKIyAgICBodHRwOi8vd3d3LmFwYWNoZS5vcmcvbGljZW5zZXMvTElDRU5TRS0yLjAKIwojIFVubGVzcyByZXF1aXJlZCBieSBhcHBsaWNhYmxlIGxhdyBvciBhZ3JlZWQgdG8gaW4gd3JpdGluZywgc29mdHdhcmUKIyBkaXN0cmlidXRlZCB1bmRlciB0aGUgTGljZW5zZSBpcyBkaXN0cmlidXRlZCBvbiBhbiAiQVMgSVMiIEJBU0lTLAojIFdJVEhPVVQgV0FSUkFOVElFUyBPUiBDT05ESVRJT05TIE9GIEFOWSBLSU5ELCBlaXRoZXIgZXhwcmVzcyBvciBpbXBsaWVkLgojIFNlZSB0aGUgTGljZW5zZSBmb3IgdGhlIHNwZWNpZmljIGxhbmd1YWdlIGdvdmVybmluZyBwZXJtaXNzaW9ucyBhbmQKIyBsaW1pdGF0aW9ucyB1bmRlciB0aGUgTGljZW5zZS4KCiMgVW5zcGVjaWZpZWQgbG9nZ2VycyBhbmQgbG9nZ2VycyB3aXRoIGFkZGl0aXZpdHk9dHJ1ZSBvdXRwdXQgdG8gc2VydmVyLmxvZyBhbmQgc3Rkb3V0CiMgTm90ZSB0aGF0IElORk8gb25seSBhcHBsaWVzIHRvIHVuc3BlY2lmaWVkIGxvZ2dlcnMsIHRoZSBsb2cgbGV2ZWwgb2YgdGhlIGNoaWxkIGxvZ2dlciBpcyB1c2VkIG90aGVyd2lzZQpsb2c0ai5yb290TG9nZ2VyPUlORk8sIHN0ZG91dAoKbG9nNGouYXBwZW5kZXIuc3Rkb3V0PW9yZy5hcGFjaGUubG9nNGouQ29uc29sZUFwcGVuZGVyCmxvZzRqLmFwcGVuZGVyLnN0ZG91dC5sYXlvdXQ9b3JnLmFwYWNoZS5sb2c0ai5QYXR0ZXJuTGF5b3V0CmxvZzRqLmFwcGVuZGVyLnN0ZG91dC5sYXlvdXQuQ29udmVyc2lvblBhdHRlcm49WyVkXSAlcCAlbSAoJWMpJW4KCiMgQ2hhbmdlIHRoZSBsaW5lIGJlbG93IHRvIGFkanVzdCBaSyBjbGllbnQgbG9nZ2luZwpsb2c0ai5sb2dnZXIub3JnLmFwYWNoZS56b29rZWVwZXI9SU5GTwoKIyBDaGFuZ2UgdGhlIHR3byBsaW5lcyBiZWxvdyB0byBhZGp1c3QgdGhlIGdlbmVyYWwgYnJva2VyIGxvZ2dpbmcgbGV2ZWwgKG91dHB1dCB0byBzZXJ2ZXIubG9nIGFuZCBzdGRvdXQpCmxvZzRqLmxvZ2dlci5rYWZrYT1JTkZPCmxvZzRqLmxvZ2dlci5vcmcuYXBhY2hlLmthZmthPUlORk8KCiMgQ2hhbmdlIHRvIERFQlVHIG9yIFRSQUNFIHRvIGVuYWJsZSByZXF1ZXN0IGxvZ2dpbmcKbG9nNGoubG9nZ2VyLmthZmthLnJlcXVlc3QubG9nZ2VyPVdBUk4KCiMgVW5jb21tZW50IHRoZSBsaW5lcyBiZWxvdyBhbmQgY2hhbmdlIGxvZzRqLmxvZ2dlci5rYWZrYS5uZXR3b3JrLlJlcXVlc3RDaGFubmVsJCB0byBUUkFDRSBmb3IgYWRkaXRpb25hbCBvdXRwdXQKIyByZWxhdGVkIHRvIHRoZSBoYW5kbGluZyBvZiByZXF1ZXN0cwojbG9nNGoubG9nZ2VyLmthZmthLm5ldHdvcmsuUHJvY2Vzc29yPVRSQUNFLCByZXF1ZXN0QXBwZW5kZXIKI2xvZzRqLmxvZ2dlci5rYWZrYS5zZXJ2ZXIuS2Fma2FBcGlzPVRSQUNFLCByZXF1ZXN0QXBwZW5kZXIKIwpsb2c0ai5sb2dnZXIua2Fma2EubmV0d29yay5SZXF1ZXN0Q2hhbm5lbCQ9V0FSTgoKbG9nNGoubG9nZ2VyLmthZmthLmNvbnRyb2xsZXI9REVCVUcKCgpsb2c0ai5sb2dnZXIua2Fma2EubG9nLkxvZ0NsZWFuZXI9SU5GTwoKCmxvZzRqLmxvZ2dlci5zdGF0ZS5jaGFuZ2UubG9nZ2VyPUlORk8KCiMgQWNjZXNzIGRlbmlhbHMgYXJlIGxvZ2dlZCBhdCBJTkZPIGxldmVsLCBjaGFuZ2UgdG8gREVCVUcgdG8gYWxzbyBsb2cgYWxsb3dlZCBhY2Nlc3Nlcwpsb2c0ai5sb2dnZXIua2Fma2EuYXV0aG9yaXplci5sb2dnZXI9SU5GTwo=|base64 -d >kafka_$scala_version-$kafka_version/config/log4j.properties
 
 
 # backported from https://github.com/docker-library/openjdk/blob/master/18/jdk/slim-bullseye/Dockerfile
-FROM debian:bullseye-slim@sha256:f18adf4e1d04b1d8ba48025b8e35003f4c748ddd3dd8e875fe4e7d9a9c0dec84
+FROM debian:bullseye-slim
 
 ARG scala_version
 ARG KAFKA_VERSION
@@ -139,13 +141,11 @@ RUN apt-get update && \
     mkdir -p ${KAFKA_HOME}/libs/extensions
 
 COPY --from=kafka_dist /var/tmp/kafka_$scala_version-$KAFKA_VERSION ${KAFKA_HOME}
-COPY opt/kafka/config/log4j.properties ${KAFKA_HOME}/config/log4j.properties
 
 # Optimize Kafka installation: remove unnecessary files and set permissions
 RUN chmod a+x ${KAFKA_HOME}/bin/*.sh && \
     chmod g+rwX ${KAFKA_HOME} ${KAFKA_HOME}/libs/extensions && \
-    rm -rf ${KAFKA_HOME}/bin/windows ${KAFKA_HOME}/site-docs && \
-    find ${KAFKA_HOME} -name "*.bat" -delete
+    chmod g+rwX ${KAFKA_HOME} ${KAFKA_HOME}/libs/extensions
 
 # Add metadata labels
 LABEL org.opencontainers.image.title="Apache Kafka"

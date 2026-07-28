@@ -1,0 +1,35 @@
+FROM alpine:latest AS dist
+
+ARG zookeeper_version
+ARG scala_version
+ARG kafka_version
+ARG distro_base_url=https://archive.apache.org/dist/kafka
+
+ENV distro=kafka_$scala_version-$kafka_version.tgz
+ENV distro_asc=$distro.asc
+
+WORKDIR /
+
+# Download, verify, extract and clean up Kafka in single layer
+RUN apk add --no-cache gnupg wget && \
+    wget -q $distro_base_url/$kafka_version/$distro && \
+    wget -q $distro_base_url/$kafka_version/$distro_asc && \
+    wget -q $distro_base_url/KEYS && \
+    gpg --import KEYS && \
+    gpg --verify $distro_asc $distro && \
+    tar -xzf $distro && \
+    mv kafka_$scala_version-$kafka_version dist && \
+    rm -rf dist/bin/windows \
+           dist/site-docs \
+           dist/licenses dist/LICENSE dist/NOTICE \
+           dist/libs/zookeeper-* dist/libs/*.asc \
+           $distro $distro_asc KEYS && \
+    wget -qO- https://archive.apache.org/dist/zookeeper/zookeeper-$zookeeper_version/apache-zookeeper-$zookeeper_version-bin.tar.gz | tar -xzCdist/libs --strip-components 2 apache-zookeeper-$zookeeper_version-bin/lib/zookeeper-jute-$zookeeper_version.jar apache-zookeeper-$zookeeper_version-bin/lib/zookeeper-$zookeeper_version.jar && \
+    echo IyBMaWNlbnNlZCB0byB0aGUgQXBhY2hlIFNvZnR3YXJlIEZvdW5kYXRpb24gKEFTRikgdW5kZXIgb25lIG9yIG1vcmUKIyBjb250cmlidXRvciBsaWNlbnNlIGFncmVlbWVudHMuICBTZWUgdGhlIE5PVElDRSBmaWxlIGRpc3RyaWJ1dGVkIHdpdGgKIyB0aGlzIHdvcmsgZm9yIGFkZGl0aW9uYWwgaW5mb3JtYXRpb24gcmVnYXJkaW5nIGNvcHlyaWdodCBvd25lcnNoaXAuCiMgVGhlIEFTRiBsaWNlbnNlcyB0aGlzIGZpbGUgdG8gWW91IHVuZGVyIHRoZSBBcGFjaGUgTGljZW5zZSwgVmVyc2lvbiAyLjAKIyAodGhlICJMaWNlbnNlIik7IHlvdSBtYXkgbm90IHVzZSB0aGlzIGZpbGUgZXhjZXB0IGluIGNvbXBsaWFuY2Ugd2l0aAojIHRoZSBMaWNlbnNlLiAgWW91IG1heSBvYnRhaW4gYSBjb3B5IG9mIHRoZSBMaWNlbnNlIGF0CiMKIyAgICBodHRwOi8vd3d3LmFwYWNoZS5vcmcvbGljZW5zZXMvTElDRU5TRS0yLjAKIwojIFVubGVzcyByZXF1aXJlZCBieSBhcHBsaWNhYmxlIGxhdyBvciBhZ3JlZWQgdG8gaW4gd3JpdGluZywgc29mdHdhcmUKIyBkaXN0cmlidXRlZCB1bmRlciB0aGUgTGljZW5zZSBpcyBkaXN0cmlidXRlZCBvbiBhbiAiQVMgSVMiIEJBU0lTLAojIFdJVEhPVVQgV0FSUkFOVElFUyBPUiBDT05ESVRJT05TIE9GIEFOWSBLSU5ELCBlaXRoZXIgZXhwcmVzcyBvciBpbXBsaWVkLgojIFNlZSB0aGUgTGljZW5zZSBmb3IgdGhlIHNwZWNpZmljIGxhbmd1YWdlIGdvdmVybmluZyBwZXJtaXNzaW9ucyBhbmQKIyBsaW1pdGF0aW9ucyB1bmRlciB0aGUgTGljZW5zZS4KCiMgVW5zcGVjaWZpZWQgbG9nZ2VycyBhbmQgbG9nZ2VycyB3aXRoIGFkZGl0aXZpdHk9dHJ1ZSBvdXRwdXQgdG8gc2VydmVyLmxvZyBhbmQgc3Rkb3V0CiMgTm90ZSB0aGF0IElORk8gb25seSBhcHBsaWVzIHRvIHVuc3BlY2lmaWVkIGxvZ2dlcnMsIHRoZSBsb2cgbGV2ZWwgb2YgdGhlIGNoaWxkIGxvZ2dlciBpcyB1c2VkIG90aGVyd2lzZQpsb2c0ai5yb290TG9nZ2VyPUlORk8sIHN0ZG91dAoKbG9nNGouYXBwZW5kZXIuc3Rkb3V0PW9yZy5hcGFjaGUubG9nNGouQ29uc29sZUFwcGVuZGVyCmxvZzRqLmFwcGVuZGVyLnN0ZG91dC5sYXlvdXQ9b3JnLmFwYWNoZS5sb2c0ai5QYXR0ZXJuTGF5b3V0CmxvZzRqLmFwcGVuZGVyLnN0ZG91dC5sYXlvdXQuQ29udmVyc2lvblBhdHRlcm49WyVkXSAlcCAlbSAoJWMpJW4KCiMgQ2hhbmdlIHRoZSBsaW5lIGJlbG93IHRvIGFkanVzdCBaSyBjbGllbnQgbG9nZ2luZwpsb2c0ai5sb2dnZXIub3JnLmFwYWNoZS56b29rZWVwZXI9SU5GTwoKIyBDaGFuZ2UgdGhlIHR3byBsaW5lcyBiZWxvdyB0byBhZGp1c3QgdGhlIGdlbmVyYWwgYnJva2VyIGxvZ2dpbmcgbGV2ZWwgKG91dHB1dCB0byBzZXJ2ZXIubG9nIGFuZCBzdGRvdXQpCmxvZzRqLmxvZ2dlci5rYWZrYT1JTkZPCmxvZzRqLmxvZ2dlci5vcmcuYXBhY2hlLmthZmthPUlORk8KCiMgQ2hhbmdlIHRvIERFQlVHIG9yIFRSQUNFIHRvIGVuYWJsZSByZXF1ZXN0IGxvZ2dpbmcKbG9nNGoubG9nZ2VyLmthZmthLnJlcXVlc3QubG9nZ2VyPVdBUk4KCiMgVW5jb21tZW50IHRoZSBsaW5lcyBiZWxvdyBhbmQgY2hhbmdlIGxvZzRqLmxvZ2dlci5rYWZrYS5uZXR3b3JrLlJlcXVlc3RDaGFubmVsJCB0byBUUkFDRSBmb3IgYWRkaXRpb25hbCBvdXRwdXQKIyByZWxhdGVkIHRvIHRoZSBoYW5kbGluZyBvZiByZXF1ZXN0cwojbG9nNGoubG9nZ2VyLmthZmthLm5ldHdvcmsuUHJvY2Vzc29yPVRSQUNFLCByZXF1ZXN0QXBwZW5kZXIKI2xvZzRqLmxvZ2dlci5rYWZrYS5zZXJ2ZXIuS2Fma2FBcGlzPVRSQUNFLCByZXF1ZXN0QXBwZW5kZXIKIwpsb2c0ai5sb2dnZXIua2Fma2EubmV0d29yay5SZXF1ZXN0Q2hhbm5lbCQ9V0FSTgoKbG9nNGoubG9nZ2VyLmthZmthLmNvbnRyb2xsZXI9REVCVUcKCgpsb2c0ai5sb2dnZXIua2Fma2EubG9nLkxvZ0NsZWFuZXI9SU5GTwoKCmxvZzRqLmxvZ2dlci5zdGF0ZS5jaGFuZ2UubG9nZ2VyPUlORk8KCiMgQWNjZXNzIGRlbmlhbHMgYXJlIGxvZ2dlZCBhdCBJTkZPIGxldmVsLCBjaGFuZ2UgdG8gREVCVUcgdG8gYWxzbyBsb2cgYWxsb3dlZCBhY2Nlc3Nlcwpsb2c0ai5sb2dnZXIua2Fma2EuYXV0aG9yaXplci5sb2dnZXI9SU5GTwo=|base64 -d >dist/config/log4j.properties
+
+FROM muicoder/java:11
+ENV DIST_HOME=/dist
+COPY --from=dist $DIST_HOME $DIST_HOME
+ENV PATH=$PATH:$DIST_HOME/bin
+WORKDIR $DIST_HOME
+CMD ["kafka-server-start.sh"]
